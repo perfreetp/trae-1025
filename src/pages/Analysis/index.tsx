@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo, useRef } from 'react';
 import ReactECharts from 'echarts-for-react';
 import {
   BarChart3,
@@ -9,7 +9,6 @@ import {
   Train,
   Wrench,
   AlertTriangle,
-  ChevronDown,
   RefreshCw,
 } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
@@ -17,18 +16,56 @@ import { Tag } from '@/components/ui/Tag';
 import { useAppStore } from '@/store/useAppStore';
 import { mockDailyReport, mockHourlyFlow } from '@/mock';
 import { cn } from '@/lib/utils';
-import { format } from 'date-fns';
+import { format, differenceInDays } from 'date-fns';
+import { zhCN } from 'date-fns/locale';
 
 export default function Analysis() {
-  const { trainForecasts, events, gateDevices } = useAppStore();
+  const {
+    trainForecasts,
+    events,
+    gateDevices,
+    passengerFlow,
+    selectedDate,
+    setSelectedDate,
+    refreshAnalysisData,
+  } = useAppStore();
   const [activeTab, setActiveTab] = useState<'forecast' | 'comparison' | 'report' | 'equipment'>('forecast');
-  const [selectedDate, setSelectedDate] = useState(new Date());
   const [timeRange, setTimeRange] = useState<'day' | 'week' | 'month'>('day');
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const reportRef = useRef<HTMLDivElement>(null);
 
   const resolvedEvents = events.filter((e) => e.status === 'resolved' || e.status === 'closed').length;
   const faultDevices = gateDevices.filter((g) => g.status === 'fault').length;
 
-  const trendOption = {
+  const dateOffset = useMemo(() => {
+    const today = new Date();
+    return differenceInDays(today, selectedDate);
+  }, [selectedDate]);
+
+  const getDailyReport = useMemo(() => {
+    const variation = 1 - dateOffset * 0.02;
+    return {
+      totalIn: Math.floor(mockDailyReport.totalIn * variation * (0.95 + Math.random() * 0.1)),
+      totalOut: Math.floor(mockDailyReport.totalOut * variation * (0.95 + Math.random() * 0.1)),
+      peakInHour: mockDailyReport.peakInHour,
+      peakInCount: Math.floor(mockDailyReport.peakInCount * variation * (0.95 + Math.random() * 0.1)),
+      events: Math.floor(mockDailyReport.events * variation),
+      resolvedEvents: Math.floor(mockDailyReport.resolvedEvents * variation),
+      equipmentFaults: Math.floor(mockDailyReport.equipmentFaults * variation),
+      avgRepairTime: mockDailyReport.avgRepairTime,
+    };
+  }, [dateOffset]);
+
+  const hourlyFlow = useMemo(() => {
+    const variation = 1 - dateOffset * 0.02;
+    return mockHourlyFlow.map((d) => ({
+      hour: d.hour,
+      inCount: Math.floor(d.inCount * variation * (0.9 + Math.random() * 0.2)),
+      outCount: Math.floor(d.outCount * variation * (0.9 + Math.random() * 0.2)),
+    }));
+  }, [dateOffset]);
+
+  const trendOption = useMemo(() => ({
     tooltip: {
       trigger: 'axis',
       backgroundColor: 'rgba(255,255,255,0.95)',
@@ -48,7 +85,7 @@ export default function Analysis() {
     },
     xAxis: {
       type: 'category',
-      data: mockHourlyFlow.map((d) => `${d.hour}:00`),
+      data: hourlyFlow.map((d) => `${d.hour}:00`),
       axisLine: { lineStyle: { color: '#e5e7eb' } },
     },
     yAxis: {
@@ -61,7 +98,7 @@ export default function Analysis() {
         name: '进站人数',
         type: 'line',
         smooth: true,
-        data: mockHourlyFlow.map((d) => d.inCount),
+        data: hourlyFlow.map((d) => d.inCount),
         itemStyle: { color: '#0F3460' },
         lineStyle: { width: 3 },
         areaStyle: {
@@ -79,7 +116,7 @@ export default function Analysis() {
         name: '出站人数',
         type: 'line',
         smooth: true,
-        data: mockHourlyFlow.map((d) => d.outCount),
+        data: hourlyFlow.map((d) => d.outCount),
         itemStyle: { color: '#16C79A' },
         lineStyle: { width: 3 },
         areaStyle: {
@@ -98,13 +135,13 @@ export default function Analysis() {
         type: 'line',
         smooth: true,
         lineStyle: { type: 'dashed', width: 2, color: '#9CA3AF' },
-        data: mockHourlyFlow.map((d) => d.inCount * 0.85),
+        data: hourlyFlow.map((d) => d.inCount * 0.85),
         itemStyle: { color: '#9CA3AF' },
       },
     ],
-  };
+  }), [hourlyFlow]);
 
-  const eventTypeOption = {
+  const eventTypeOption = useMemo(() => ({
     tooltip: {
       trigger: 'item',
       backgroundColor: 'rgba(255,255,255,0.95)',
@@ -140,7 +177,7 @@ export default function Analysis() {
         ],
       },
     ],
-  };
+  }), [events]);
 
   const weekComparisonOption = {
     tooltip: {
@@ -195,6 +232,154 @@ export default function Analysis() {
     ],
   };
 
+  const handleDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newDate = new Date(e.target.value);
+    if (!isNaN(newDate.getTime())) {
+      setSelectedDate(newDate);
+    }
+  };
+
+  const handleRefresh = () => {
+    setIsRefreshing(true);
+    refreshAnalysisData();
+    setTimeout(() => {
+      setIsRefreshing(false);
+    }, 1000);
+  };
+
+  const exportToCSV = () => {
+    const headers = ['指标', '数值', '单位'];
+    const rows = [
+      ['进站人数', getDailyReport.totalIn.toLocaleString(), '人'],
+      ['出站人数', getDailyReport.totalOut.toLocaleString(), '人'],
+      ['峰值时段', `${getDailyReport.peakInHour}:00`, ''],
+      ['峰值人数', getDailyReport.peakInCount.toLocaleString(), '人'],
+      ['事件总数', getDailyReport.events.toString(), '件'],
+      ['已解决', getDailyReport.resolvedEvents.toString(), '件'],
+      ['设备故障', getDailyReport.equipmentFaults.toString(), '次'],
+      ['平均修复时间', getDailyReport.avgRepairTime.toString(), '分钟'],
+    ];
+
+    let csvContent = '\uFEFF';
+    csvContent += headers.join(',') + '\n';
+    rows.forEach((row) => {
+      csvContent += row.join(',') + '\n';
+    });
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `车站客流日报_${format(selectedDate, 'yyyyMMdd')}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const handlePrint = () => {
+    const printContent = reportRef.current;
+    if (!printContent) return;
+
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) return;
+
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>车站客流组织日报 - ${format(selectedDate, 'yyyy年MM月dd日')}</title>
+        <style>
+          body { font-family: 'Microsoft YaHei', sans-serif; padding: 40px; }
+          .report-container { max-width: 800px; margin: 0 auto; }
+          .header { text-align: center; margin-bottom: 30px; border-bottom: 2px solid #0F3460; padding-bottom: 20px; }
+          .header h1 { margin: 0; color: #0F3460; font-size: 24px; }
+          .header p { margin: 10px 0 0; color: #666; }
+          .section { margin-bottom: 25px; }
+          .section h2 { color: #0F3460; font-size: 18px; border-left: 4px solid #0F3460; padding-left: 10px; margin-bottom: 15px; }
+          .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; }
+          .stat-card { background: #f8fafc; padding: 15px; border-radius: 8px; text-align: center; }
+          .stat-card .label { font-size: 13px; color: #666; margin-bottom: 5px; }
+          .stat-card .value { font-size: 20px; font-weight: bold; color: #1f2937; }
+          .stats-grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; }
+          @media print {
+            body { padding: 20px; }
+            .stat-card { break-inside: avoid; }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="report-container">
+          <div class="header">
+            <h1>车站客流组织日报</h1>
+            <p>${format(selectedDate, 'yyyy年MM月dd日')}</p>
+          </div>
+          
+          <div class="section">
+            <h2>一、客流概况</h2>
+            <div class="stats-grid">
+              <div class="stat-card">
+                <div class="label">进站人数</div>
+                <div class="value">${getDailyReport.totalIn.toLocaleString()}</div>
+              </div>
+              <div class="stat-card">
+                <div class="label">出站人数</div>
+                <div class="value">${getDailyReport.totalOut.toLocaleString()}</div>
+              </div>
+              <div class="stat-card">
+                <div class="label">峰值时段</div>
+                <div class="value">${getDailyReport.peakInHour}:00</div>
+              </div>
+              <div class="stat-card">
+                <div class="label">峰值人数</div>
+                <div class="value">${getDailyReport.peakInCount}</div>
+              </div>
+            </div>
+          </div>
+          
+          <div class="section">
+            <h2>二、事件处置</h2>
+            <div class="stats-grid-2">
+              <div class="stat-card">
+                <div class="label">事件总数</div>
+                <div class="value">${getDailyReport.events}件</div>
+              </div>
+              <div class="stat-card">
+                <div class="label">已解决</div>
+                <div class="value" style="color: #16C79A;">${getDailyReport.resolvedEvents}件</div>
+              </div>
+            </div>
+          </div>
+          
+          <div class="section">
+            <h2>三、设备运行</h2>
+            <div class="stats-grid-2">
+              <div class="stat-card">
+                <div class="label">设备故障</div>
+                <div class="value">${getDailyReport.equipmentFaults}次</div>
+              </div>
+              <div class="stat-card">
+                <div class="label">平均修复时间</div>
+                <div class="value">${getDailyReport.avgRepairTime}分钟</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </body>
+      </html>
+    `);
+
+    printWindow.document.close();
+    printWindow.focus();
+    setTimeout(() => {
+      printWindow.print();
+    }, 250);
+  };
+
+  const exportToPDF = () => {
+    handlePrint();
+  };
+
   return (
     <div className="space-y-6 animate-fade-in">
       <div className="flex items-center justify-between">
@@ -239,14 +424,26 @@ export default function Analysis() {
             ))}
           </div>
           <div className="relative">
-            <button className="flex items-center gap-2 px-3 py-1.5 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">
+            <label className="flex items-center gap-2 px-3 py-1.5 border border-gray-300 rounded-lg text-sm hover:bg-gray-50 cursor-pointer">
               <Calendar className="w-4 h-4" />
-              <span>{format(selectedDate, 'yyyy年MM月dd日')}</span>
-              <ChevronDown className="w-4 h-4" />
-            </button>
+              <input
+                type="date"
+                value={format(selectedDate, 'yyyy-MM-dd')}
+                onChange={handleDateChange}
+                className="absolute inset-0 opacity-0 cursor-pointer"
+              />
+              <span>{format(selectedDate, 'yyyy年MM月dd日', { locale: zhCN })}</span>
+            </label>
           </div>
-          <button className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-300 rounded-lg text-sm hover:bg-gray-50">
-            <RefreshCw className="w-4 h-4" />
+          <button
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            className={cn(
+              'flex items-center gap-1.5 px-3 py-1.5 border border-gray-300 rounded-lg text-sm hover:bg-gray-50 transition-colors',
+              isRefreshing && 'opacity-60 cursor-not-allowed'
+            )}
+          >
+            <RefreshCw className={cn('w-4 h-4', isRefreshing && 'animate-spin')} />
             刷新数据
           </button>
         </div>
@@ -271,7 +468,7 @@ export default function Analysis() {
               <div>
                 <p className="text-sm text-gray-500">预计发送旅客</p>
                 <p className="text-2xl font-bold text-green-600">
-                  {trainForecasts.reduce((sum, t) => sum + t.forecastPassengers, 0).toLocaleString()}
+                  {Math.floor(trainForecasts.reduce((sum, t) => sum + t.forecastPassengers, 0) * (1 - dateOffset * 0.02)).toLocaleString()}
                   <span className="text-sm font-normal text-gray-500">人</span>
                 </p>
               </div>
@@ -379,14 +576,14 @@ export default function Analysis() {
           <Card title="关键指标对比" className="col-span-2">
             <div className="grid grid-cols-4 gap-4">
               {[
-                { label: '今日进站', value: mockDailyReport.totalIn.toLocaleString(), trend: 8.5, unit: '人' },
-                { label: '今日出站', value: mockDailyReport.totalOut.toLocaleString(), trend: 6.2, unit: '人' },
-                { label: '峰值小时', value: `${mockDailyReport.peakInHour}:00`, trend: 0, unit: '' },
-                { label: '峰值人数', value: mockDailyReport.peakInCount.toLocaleString(), trend: 12.3, unit: '人' },
-                { label: '事件总数', value: mockDailyReport.events, trend: -15.2, unit: '件' },
-                { label: '已解决', value: mockDailyReport.resolvedEvents, trend: -10.5, unit: '件' },
-                { label: '设备故障', value: mockDailyReport.equipmentFaults, trend: 5.8, unit: '次' },
-                { label: '平均修复', value: mockDailyReport.avgRepairTime, trend: -8.3, unit: '分钟' },
+                { label: '今日进站', value: getDailyReport.totalIn.toLocaleString(), trend: 8.5, unit: '人' },
+                { label: '今日出站', value: getDailyReport.totalOut.toLocaleString(), trend: 6.2, unit: '人' },
+                { label: '峰值小时', value: `${getDailyReport.peakInHour}:00`, trend: 0, unit: '' },
+                { label: '峰值人数', value: getDailyReport.peakInCount.toLocaleString(), trend: 12.3, unit: '人' },
+                { label: '事件总数', value: getDailyReport.events, trend: -15.2, unit: '件' },
+                { label: '已解决', value: getDailyReport.resolvedEvents, trend: -10.5, unit: '件' },
+                { label: '设备故障', value: getDailyReport.equipmentFaults, trend: 5.8, unit: '次' },
+                { label: '平均修复', value: getDailyReport.avgRepairTime, trend: -8.3, unit: '分钟' },
               ].map((item, index) => (
                 <div key={index} className="p-4 bg-gray-50 rounded-lg">
                   <p className="text-sm text-gray-500 mb-1">{item.label}</p>
@@ -415,10 +612,10 @@ export default function Analysis() {
       {activeTab === 'report' && (
         <div className="grid grid-cols-3 gap-6">
           <Card title="日报预览" className="col-span-2">
-            <div className="bg-white border border-gray-200 rounded-lg p-6">
+            <div ref={reportRef} className="bg-white border border-gray-200 rounded-lg p-6">
               <div className="text-center mb-6">
                 <h2 className="text-xl font-bold text-gray-900">车站客流组织日报</h2>
-                <p className="text-sm text-gray-500 mt-1">{format(selectedDate, 'yyyy年MM月dd日')}</p>
+                <p className="text-sm text-gray-500 mt-1">{format(selectedDate, 'yyyy年MM月dd日', { locale: zhCN })}</p>
               </div>
 
               <div className="space-y-4">
@@ -427,19 +624,19 @@ export default function Analysis() {
                   <div className="grid grid-cols-4 gap-4">
                     <div className="text-center p-3 bg-gray-50 rounded">
                       <p className="text-sm text-gray-500">进站人数</p>
-                      <p className="text-lg font-bold text-gray-900">{mockDailyReport.totalIn.toLocaleString()}</p>
+                      <p className="text-lg font-bold text-gray-900">{getDailyReport.totalIn.toLocaleString()}</p>
                     </div>
                     <div className="text-center p-3 bg-gray-50 rounded">
                       <p className="text-sm text-gray-500">出站人数</p>
-                      <p className="text-lg font-bold text-gray-900">{mockDailyReport.totalOut.toLocaleString()}</p>
+                      <p className="text-lg font-bold text-gray-900">{getDailyReport.totalOut.toLocaleString()}</p>
                     </div>
                     <div className="text-center p-3 bg-gray-50 rounded">
                       <p className="text-sm text-gray-500">峰值时段</p>
-                      <p className="text-lg font-bold text-gray-900">{mockDailyReport.peakInHour}:00</p>
+                      <p className="text-lg font-bold text-gray-900">{getDailyReport.peakInHour}:00</p>
                     </div>
                     <div className="text-center p-3 bg-gray-50 rounded">
                       <p className="text-sm text-gray-500">峰值人数</p>
-                      <p className="text-lg font-bold text-gray-900">{mockDailyReport.peakInCount}</p>
+                      <p className="text-lg font-bold text-gray-900">{getDailyReport.peakInCount}</p>
                     </div>
                   </div>
                 </div>
@@ -449,11 +646,11 @@ export default function Analysis() {
                   <div className="grid grid-cols-2 gap-4">
                     <div className="text-center p-3 bg-gray-50 rounded">
                       <p className="text-sm text-gray-500">事件总数</p>
-                      <p className="text-lg font-bold text-gray-900">{mockDailyReport.events}件</p>
+                      <p className="text-lg font-bold text-gray-900">{getDailyReport.events}件</p>
                     </div>
                     <div className="text-center p-3 bg-gray-50 rounded">
                       <p className="text-sm text-gray-500">已解决</p>
-                      <p className="text-lg font-bold text-green-600">{mockDailyReport.resolvedEvents}件</p>
+                      <p className="text-lg font-bold text-green-600">{getDailyReport.resolvedEvents}件</p>
                     </div>
                   </div>
                 </div>
@@ -463,11 +660,11 @@ export default function Analysis() {
                   <div className="grid grid-cols-2 gap-4">
                     <div className="text-center p-3 bg-gray-50 rounded">
                       <p className="text-sm text-gray-500">设备故障</p>
-                      <p className="text-lg font-bold text-gray-900">{mockDailyReport.equipmentFaults}次</p>
+                      <p className="text-lg font-bold text-gray-900">{getDailyReport.equipmentFaults}次</p>
                     </div>
                     <div className="text-center p-3 bg-gray-50 rounded">
                       <p className="text-sm text-gray-500">平均修复时间</p>
-                      <p className="text-lg font-bold text-gray-900">{mockDailyReport.avgRepairTime}分钟</p>
+                      <p className="text-lg font-bold text-gray-900">{getDailyReport.avgRepairTime}分钟</p>
                     </div>
                   </div>
                 </div>
@@ -478,15 +675,24 @@ export default function Analysis() {
           <div className="space-y-6">
             <Card title="报表导出">
               <div className="space-y-3">
-                <button className="w-full py-3 px-4 bg-primary-500 text-white rounded-lg hover:bg-primary-600 transition-colors flex items-center justify-center gap-2">
+                <button
+                  onClick={exportToPDF}
+                  className="w-full py-3 px-4 bg-primary-500 text-white rounded-lg hover:bg-primary-600 transition-colors flex items-center justify-center gap-2"
+                >
                   <Download className="w-4 h-4" />
                   导出 PDF 格式
                 </button>
-                <button className="w-full py-3 px-4 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors flex items-center justify-center gap-2">
+                <button
+                  onClick={exportToCSV}
+                  className="w-full py-3 px-4 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors flex items-center justify-center gap-2"
+                >
                   <Download className="w-4 h-4" />
                   导出 Excel 格式
                 </button>
-                <button className="w-full py-3 px-4 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors flex items-center justify-center gap-2">
+                <button
+                  onClick={handlePrint}
+                  className="w-full py-3 px-4 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors flex items-center justify-center gap-2"
+                >
                   <FileText className="w-4 h-4" />
                   打印报表
                 </button>

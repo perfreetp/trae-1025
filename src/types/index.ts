@@ -164,3 +164,18 @@ export interface PeakWarning {
   forecastCount: number;
   suggestions: string[];
 }
+
+export type ScheduledBroadcastStatus = 'pending' | 'played' | 'cancelled';
+
+export interface ScheduledBroadcast {
+  id: string;
+  name: string;
+  content: string;
+  templateId?: string;
+  area: string[];
+  scheduledTime: Date;
+  repeat?: 'once' | 'daily' | 'weekly';
+  status: ScheduledBroadcastStatus;
+  createdBy: string;
+  createdAt: Date;
+}
