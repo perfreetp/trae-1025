@@ -64,7 +64,8 @@ export default function Analysis() {
     setNotesSaved(false);
   }, [dateKey, dailyReports, getOrCreateDailyReport]);
 
-  const currentReportData = reportData || dailyReports[dateKey];
+  const currentReportData = dailyReports[dateKey] || reportData;
+  const currentNotes = currentReportData?.notes || { summary: '', exceptions: '', handover: '' };
 
   const handleSaveNotes = () => {
     updateDailyReportNotes(dateKey, notes);
@@ -81,6 +82,7 @@ export default function Analysis() {
 
   const getDailyReport = currentReportData?.report;
   const hourlyFlow = currentReportData?.hourlyFlow || [];
+  const exportNotes = currentNotes;
 
   const dateOffset = useMemo(() => {
     const today = new Date();
@@ -302,16 +304,16 @@ export default function Analysis() {
       ['平均修复时间', getDailyReport.avgRepairTime.toString(), '分钟'],
     ];
 
-    if (notes.summary || notes.exceptions || notes.handover) {
+    if (exportNotes.summary || exportNotes.exceptions || exportNotes.handover) {
       summaryData.push([], ['四、值班备注与交接']);
-      if (notes.summary) {
-        summaryData.push(['客流总结', notes.summary]);
+      if (exportNotes.summary) {
+        summaryData.push(['客流总结', exportNotes.summary]);
       }
-      if (notes.exceptions) {
-        summaryData.push(['异常说明', notes.exceptions]);
+      if (exportNotes.exceptions) {
+        summaryData.push(['异常说明', exportNotes.exceptions]);
       }
-      if (notes.handover) {
-        summaryData.push(['下一班提醒', notes.handover]);
+      if (exportNotes.handover) {
+        summaryData.push(['下一班提醒', exportNotes.handover]);
       }
     }
     
@@ -418,26 +420,26 @@ export default function Analysis() {
             </div>
           </div>
           
-          ${notes.summary || notes.exceptions || notes.handover ? `
+          ${exportNotes.summary || exportNotes.exceptions || exportNotes.handover ? `
           <div class="section">
             <h2>四、值班备注与交接</h2>
             <div class="space-y-3">
-              ${notes.summary ? `
+              ${exportNotes.summary ? `
               <div class="p-3 bg-blue-50 rounded-lg">
                 <p class="text-xs font-medium text-blue-700 mb-1">客流总结</p>
-                <p class="text-sm text-gray-700">${notes.summary}</p>
+                <p class="text-sm text-gray-700">${exportNotes.summary}</p>
               </div>
               ` : ''}
-              ${notes.exceptions ? `
+              ${exportNotes.exceptions ? `
               <div class="p-3 bg-orange-50 rounded-lg">
                 <p class="text-xs font-medium text-orange-700 mb-1">异常说明</p>
-                <p class="text-sm text-gray-700">${notes.exceptions}</p>
+                <p class="text-sm text-gray-700">${exportNotes.exceptions}</p>
               </div>
               ` : ''}
-              ${notes.handover ? `
+              ${exportNotes.handover ? `
               <div class="p-3 bg-green-50 rounded-lg">
                 <p class="text-xs font-medium text-green-700 mb-1">下一班提醒</p>
-                <p class="text-sm text-gray-700">${notes.handover}</p>
+                <p class="text-sm text-gray-700">${exportNotes.handover}</p>
               </div>
               ` : ''}
             </div>
@@ -456,43 +458,164 @@ export default function Analysis() {
   };
 
   const exportToPDF = async () => {
-    if (!getDailyReport || !reportRef.current) return;
+    if (!getDailyReport) return;
     
     try {
-      const canvas = await html2canvas(reportRef.current, {
+      const printContainer = document.createElement('div');
+      printContainer.style.position = 'absolute';
+      printContainer.style.left = '-9999px';
+      printContainer.style.top = '0';
+      printContainer.style.width = '794px';
+      printContainer.style.background = '#ffffff';
+      printContainer.style.padding = '40px';
+      printContainer.style.fontFamily = 'Microsoft YaHei, sans-serif';
+      
+      const notesHtml = exportNotes.summary || exportNotes.exceptions || exportNotes.handover ? `
+        <div style="margin-bottom: 25px;">
+          <h2 style="color: #0F3460; font-size: 18px; border-left: 4px solid #0F3460; padding-left: 10px; margin-bottom: 15px;">四、值班备注与交接</h2>
+          ${exportNotes.summary ? `
+            <div style="background: #eff6ff; padding: 12px; border-radius: 8px; margin-bottom: 10px;">
+              <p style="font-size: 12px; font-weight: 600; color: #1d4ed8; margin: 0 0 6px 0;">客流总结</p>
+              <p style="font-size: 14px; color: #374151; margin: 0;">${exportNotes.summary}</p>
+            </div>
+          ` : ''}
+          ${exportNotes.exceptions ? `
+            <div style="background: #fff7ed; padding: 12px; border-radius: 8px; margin-bottom: 10px;">
+              <p style="font-size: 12px; font-weight: 600; color: #c2410c; margin: 0 0 6px 0;">异常说明</p>
+              <p style="font-size: 14px; color: #374151; margin: 0;">${exportNotes.exceptions}</p>
+            </div>
+          ` : ''}
+          ${exportNotes.handover ? `
+            <div style="background: #f0fdf4; padding: 12px; border-radius: 8px;">
+              <p style="font-size: 12px; font-weight: 600; color: #15803d; margin: 0 0 6px 0;">下一班提醒</p>
+              <p style="font-size: 14px; color: #374151; margin: 0;">${exportNotes.handover}</p>
+            </div>
+          ` : ''}
+        </div>
+      ` : '';
+      
+      printContainer.innerHTML = `
+        <div style="max-width: 714px; margin: 0 auto;">
+          <div style="text-align: center; margin-bottom: 30px; border-bottom: 2px solid #0F3460; padding-bottom: 20px;">
+            <h1 style="margin: 0; color: #0F3460; font-size: 24px; font-weight: bold;">车站客流组织日报</h1>
+            <p style="margin: 10px 0 0; color: #666; font-size: 14px;">${format(selectedDate, 'yyyy年MM月dd日', { locale: zhCN })}</p>
+          </div>
+          
+          <div style="margin-bottom: 25px;">
+            <h2 style="color: #0F3460; font-size: 18px; border-left: 4px solid #0F3460; padding-left: 10px; margin-bottom: 15px;">一、客流概况</h2>
+            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px;">
+              <div style="background: #f8fafc; padding: 15px; border-radius: 8px; text-align: center;">
+                <div style="font-size: 13px; color: #666; margin-bottom: 5px;">进站人数</div>
+                <div style="font-size: 20px; font-weight: bold; color: #1f2937;">${getDailyReport.totalIn.toLocaleString()}</div>
+              </div>
+              <div style="background: #f8fafc; padding: 15px; border-radius: 8px; text-align: center;">
+                <div style="font-size: 13px; color: #666; margin-bottom: 5px;">出站人数</div>
+                <div style="font-size: 20px; font-weight: bold; color: #1f2937;">${getDailyReport.totalOut.toLocaleString()}</div>
+              </div>
+              <div style="background: #f8fafc; padding: 15px; border-radius: 8px; text-align: center;">
+                <div style="font-size: 13px; color: #666; margin-bottom: 5px;">峰值时段</div>
+                <div style="font-size: 20px; font-weight: bold; color: #1f2937;">${getDailyReport.peakInHour}:00</div>
+              </div>
+              <div style="background: #f8fafc; padding: 15px; border-radius: 8px; text-align: center;">
+                <div style="font-size: 13px; color: #666; margin-bottom: 5px;">峰值人数</div>
+                <div style="font-size: 20px; font-weight: bold; color: #1f2937;">${getDailyReport.peakInCount.toLocaleString()}</div>
+              </div>
+            </div>
+          </div>
+          
+          <div style="margin-bottom: 25px;">
+            <h2 style="color: #0F3460; font-size: 18px; border-left: 4px solid #0F3460; padding-left: 10px; margin-bottom: 15px;">二、事件处置</h2>
+            <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px;">
+              <div style="background: #f8fafc; padding: 15px; border-radius: 8px; text-align: center;">
+                <div style="font-size: 13px; color: #666; margin-bottom: 5px;">事件总数</div>
+                <div style="font-size: 20px; font-weight: bold; color: #1f2937;">${getDailyReport.events}件</div>
+              </div>
+              <div style="background: #f8fafc; padding: 15px; border-radius: 8px; text-align: center;">
+                <div style="font-size: 13px; color: #666; margin-bottom: 5px;">已解决</div>
+                <div style="font-size: 20px; font-weight: bold; color: #16C79A;">${getDailyReport.resolvedEvents}件</div>
+              </div>
+            </div>
+          </div>
+          
+          <div style="margin-bottom: 25px;">
+            <h2 style="color: #0F3460; font-size: 18px; border-left: 4px solid #0F3460; padding-left: 10px; margin-bottom: 15px;">三、设备运行</h2>
+            <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px;">
+              <div style="background: #f8fafc; padding: 15px; border-radius: 8px; text-align: center;">
+                <div style="font-size: 13px; color: #666; margin-bottom: 5px;">设备故障</div>
+                <div style="font-size: 20px; font-weight: bold; color: #1f2937;">${getDailyReport.equipmentFaults}次</div>
+              </div>
+              <div style="background: #f8fafc; padding: 15px; border-radius: 8px; text-align: center;">
+                <div style="font-size: 13px; color: #666; margin-bottom: 5px;">平均修复时间</div>
+                <div style="font-size: 20px; font-weight: bold; color: #1f2937;">${getDailyReport.avgRepairTime}分钟</div>
+              </div>
+            </div>
+          </div>
+          
+          ${notesHtml}
+          
+          <div style="margin-bottom: 25px;">
+            <h2 style="color: #0F3460; font-size: 18px; border-left: 4px solid #0F3460; padding-left: 10px; margin-bottom: 15px;">五、小时客流数据</h2>
+            <table style="width: 100%; border-collapse: collapse;">
+              <thead>
+                <tr style="background: #f8fafc;">
+                  <th style="padding: 10px; text-align: left; border-bottom: 1px solid #e5e7eb; font-size: 12px; color: #374151;">小时</th>
+                  <th style="padding: 10px; text-align: right; border-bottom: 1px solid #e5e7eb; font-size: 12px; color: #374151;">进站人数</th>
+                  <th style="padding: 10px; text-align: right; border-bottom: 1px solid #e5e7eb; font-size: 12px; color: #374151;">出站人数</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${hourlyFlow.slice(0, 16).map((d) => `
+                  <tr>
+                    <td style="padding: 8px 10px; border-bottom: 1px solid #f3f4f6; font-size: 12px; color: #374151;">${d.hour}:00</td>
+                    <td style="padding: 8px 10px; border-bottom: 1px solid #f3f4f6; font-size: 12px; color: #374151; text-align: right;">${d.inCount.toLocaleString()}</td>
+                    <td style="padding: 8px 10px; border-bottom: 1px solid #f3f4f6; font-size: 12px; color: #374151; text-align: right;">${d.outCount.toLocaleString()}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+      
+      document.body.appendChild(printContainer);
+      
+      const canvas = await html2canvas(printContainer, {
         scale: 2,
         useCORS: true,
         logging: false,
         backgroundColor: '#ffffff',
+        width: 794,
+        windowWidth: 794,
       });
       
-      const imgData = canvas.toDataURL('image/png');
-      const imgWidth = 210;
-      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+      document.body.removeChild(printContainer);
       
-      const doc = new jsPDF({
-        orientation: imgHeight > imgWidth ? 'portrait' : 'landscape',
+      const imgData = canvas.toDataURL('image/png');
+      const pdf = new jsPDF({
+        orientation: 'portrait',
         unit: 'mm',
         format: 'a4',
       });
       
-      const pageWidth = doc.internal.pageSize.getWidth();
-      const pageHeight = doc.internal.pageSize.getHeight();
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const imgWidth = pageWidth;
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
       
       let heightLeft = imgHeight;
       let position = 0;
       
-      doc.addImage(imgData, 'PNG', 0, position, pageWidth, (imgWidth * imgHeight) / canvas.width);
+      pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
       heightLeft -= pageHeight;
       
       while (heightLeft >= 0) {
         position = heightLeft - imgHeight;
-        doc.addPage();
-        doc.addImage(imgData, 'PNG', 0, position, pageWidth, (imgWidth * imgHeight) / canvas.width);
+        pdf.addPage();
+        pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
         heightLeft -= pageHeight;
       }
       
-      doc.save(`车站客流日报_${format(selectedDate, 'yyyyMMdd')}.pdf`);
+      pdf.save(`车站客流日报_${format(selectedDate, 'yyyyMMdd')}.pdf`);
     } catch (error) {
       console.error('PDF导出失败:', error);
       alert('PDF导出失败，请重试');
