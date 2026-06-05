@@ -58,6 +58,11 @@ const generateDailyReportData = (dateKey: string): DailyReportData => {
       outCount: Math.floor(d.outCount * variation * randomFactor()),
     })),
     generatedAt: new Date(),
+    notes: {
+      summary: '',
+      exceptions: '',
+      handover: '',
+    },
   };
 };
 
@@ -86,6 +91,8 @@ interface AppState {
     search: string;
     status: string;
     area: string;
+    startDate: string;
+    endDate: string;
   };
   dailyReports: Record<string, DailyReportData>;
 
@@ -98,12 +105,14 @@ interface AppState {
   addSpecialPassenger: (passenger: Omit<SpecialPassenger, 'id' | 'createTime' | 'status'>) => void;
   updateSpecialPassengerStatus: (id: string, status: SpecialPassenger['status']) => void;
   addScheduledBroadcast: (broadcast: Omit<ScheduledBroadcast, 'id' | 'createdAt' | 'status'>) => void;
+  updateScheduledBroadcast: (id: string, updates: Partial<Omit<ScheduledBroadcast, 'id' | 'createdAt'>>) => void;
   cancelScheduledBroadcast: (id: string) => void;
   setSelectedDate: (date: Date) => void;
   refreshAnalysisData: () => void;
   setBroadcastFilter: (filter: Partial<AppState['broadcastFilter']>) => void;
   clearBroadcastFilter: () => void;
   getOrCreateDailyReport: (dateKey: string) => DailyReportData;
+  updateDailyReportNotes: (dateKey: string, notes: Partial<DailyReportData['notes']>) => void;
   checkAndPlayScheduledBroadcasts: () => void;
   refreshDailyReport: (dateKey: string) => void;
 }
@@ -135,6 +144,8 @@ export const useAppStore = create<AppState>()(
         search: '',
         status: 'all',
         area: 'all',
+        startDate: '',
+        endDate: '',
       },
       dailyReports: {},
 
@@ -147,7 +158,7 @@ export const useAppStore = create<AppState>()(
       })),
       addBroadcastRecord: (record) => set((state) => ({
         broadcastRecords: [
-          { ...record, id: `br${Date.now()}`, playTime: new Date() },
+          { ...record, id: `br${Date.now()}`, playTime: new Date(), source: record.source || 'custom' },
           ...state.broadcastRecords,
         ],
       })),
@@ -195,6 +206,14 @@ export const useAppStore = create<AppState>()(
         }));
         setTimeout(() => get().checkAndPlayScheduledBroadcasts(), 100);
       },
+      updateScheduledBroadcast: (id, updates) => {
+        set((state) => ({
+          scheduledBroadcasts: state.scheduledBroadcasts.map((sb) =>
+            sb.id === id ? { ...sb, ...updates } : sb
+          ),
+        }));
+        setTimeout(() => get().checkAndPlayScheduledBroadcasts(), 100);
+      },
       cancelScheduledBroadcast: (id) => set((state) => ({
         scheduledBroadcasts: state.scheduledBroadcasts.map((sb) =>
           sb.id === id ? { ...sb, status: 'cancelled' } : sb
@@ -222,7 +241,7 @@ export const useAppStore = create<AppState>()(
         broadcastFilter: { ...state.broadcastFilter, ...filter },
       })),
       clearBroadcastFilter: () => set({
-        broadcastFilter: { search: '', status: 'all', area: 'all' },
+        broadcastFilter: { search: '', status: 'all', area: 'all', startDate: '', endDate: '' },
       }),
       getOrCreateDailyReport: (dateKey) => {
         const state = get();
@@ -237,6 +256,21 @@ export const useAppStore = create<AppState>()(
           },
         });
         return newData;
+      },
+      updateDailyReportNotes: (dateKey, notes) => {
+        set((state) => {
+          const existing = state.dailyReports[dateKey];
+          if (!existing) return {};
+          return {
+            dailyReports: {
+              ...state.dailyReports,
+              [dateKey]: {
+                ...existing,
+                notes: { ...existing.notes, ...notes },
+              },
+            },
+          };
+        });
       },
       refreshDailyReport: (dateKey) => {
         const newData = generateDailyReportData(dateKey);
@@ -264,6 +298,10 @@ export const useAppStore = create<AppState>()(
               operator: sb.createdBy,
               playTime: new Date(sb.scheduledTime),
               status: 'completed',
+              source: 'scheduled',
+              scheduledTaskId: sb.id,
+              scheduledTaskName: sb.name,
+              scheduledTime: new Date(sb.scheduledTime),
             });
           } else {
             updatedBroadcasts.push(sb);
@@ -298,6 +336,7 @@ export const useAppStore = create<AppState>()(
           state.broadcastRecords = state.broadcastRecords.map((r: any) => ({
             ...r,
             playTime: new Date(r.playTime),
+            scheduledTime: r.scheduledTime ? new Date(r.scheduledTime) : undefined,
           }));
           state.scheduledBroadcasts = state.scheduledBroadcasts.map((s: any) => ({
             ...s,

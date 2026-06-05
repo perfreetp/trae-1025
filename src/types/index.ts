@@ -59,6 +59,7 @@ export interface BroadcastTemplate {
 }
 
 export type BroadcastStatus = 'playing' | 'completed' | 'failed';
+export type BroadcastSource = 'template' | 'custom' | 'scheduled';
 
 export interface BroadcastRecord {
   id: string;
@@ -68,6 +69,10 @@ export interface BroadcastRecord {
   operator: string;
   playTime: Date;
   status: BroadcastStatus;
+  source: BroadcastSource;
+  scheduledTaskId?: string;
+  scheduledTaskName?: string;
+  scheduledTime?: Date;
 }
 
 export type StaffStatus = 'on_duty' | 'off_duty' | 'rest';
@@ -189,4 +194,9 @@ export interface DailyReportData {
     outCount: number;
   }>;
   generatedAt: Date;
+  notes: {
+    summary: string;
+    exceptions: string;
+    handover: string;
+  };
 }

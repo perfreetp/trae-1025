@@ -10,6 +10,11 @@ import {
   Wrench,
   AlertTriangle,
   RefreshCw,
+  Save,
+  FileCheck,
+  MessageSquare,
+  AlertCircle,
+  Handshake,
 } from 'lucide-react';
 import { Card } from '@/components/ui/Card';
 import { Tag } from '@/components/ui/Tag';
@@ -19,6 +24,7 @@ import { format, differenceInDays } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
+import html2canvas from 'html2canvas';
 
 export default function Analysis() {
   const {
@@ -31,11 +37,14 @@ export default function Analysis() {
     refreshAnalysisData,
     getOrCreateDailyReport,
     dailyReports,
+    updateDailyReportNotes,
   } = useAppStore();
   const [activeTab, setActiveTab] = useState<'forecast' | 'comparison' | 'report' | 'equipment'>('forecast');
   const [timeRange, setTimeRange] = useState<'day' | 'week' | 'month'>('day');
   const [isRefreshing, setIsRefreshing] = useState(false);
   const reportRef = useRef<HTMLDivElement>(null);
+  const [notes, setNotes] = useState({ summary: '', exceptions: '', handover: '' });
+  const [notesSaved, setNotesSaved] = useState(false);
 
   const resolvedEvents = events.filter((e) => e.status === 'resolved' || e.status === 'closed').length;
   const faultDevices = gateDevices.filter((g) => g.status === 'fault').length;
@@ -47,12 +56,28 @@ export default function Analysis() {
     if (!dailyReports[dateKey]) {
       const data = getOrCreateDailyReport(dateKey);
       setReportData(data);
+      setNotes(data.notes || { summary: '', exceptions: '', handover: '' });
     } else {
       setReportData(dailyReports[dateKey]);
+      setNotes(dailyReports[dateKey].notes || { summary: '', exceptions: '', handover: '' });
     }
+    setNotesSaved(false);
   }, [dateKey, dailyReports, getOrCreateDailyReport]);
 
   const currentReportData = reportData || dailyReports[dateKey];
+
+  const handleSaveNotes = () => {
+    updateDailyReportNotes(dateKey, notes);
+    setNotesSaved(true);
+    setTimeout(() => setNotesSaved(false), 2000);
+  };
+
+  const handleHistoricalReportClick = (key: string) => {
+    const newDate = new Date(key);
+    if (!isNaN(newDate.getTime())) {
+      setSelectedDate(newDate);
+    }
+  };
 
   const getDailyReport = currentReportData?.report;
   const hourlyFlow = currentReportData?.hourlyFlow || [];
@@ -276,9 +301,22 @@ export default function Analysis() {
       ['设备故障', getDailyReport.equipmentFaults.toString(), '次'],
       ['平均修复时间', getDailyReport.avgRepairTime.toString(), '分钟'],
     ];
+
+    if (notes.summary || notes.exceptions || notes.handover) {
+      summaryData.push([], ['四、值班备注与交接']);
+      if (notes.summary) {
+        summaryData.push(['客流总结', notes.summary]);
+      }
+      if (notes.exceptions) {
+        summaryData.push(['异常说明', notes.exceptions]);
+      }
+      if (notes.handover) {
+        summaryData.push(['下一班提醒', notes.handover]);
+      }
+    }
     
     const ws = XLSX.utils.aoa_to_sheet(summaryData);
-    ws['!cols'] = [{ wch: 20 }, { wch: 15 }, { wch: 10 }];
+    ws['!cols'] = [{ wch: 20 }, { wch: 50 }, { wch: 10 }];
     XLSX.utils.book_append_sheet(wb, ws, '日报汇总');
 
     const hourlyData = [
@@ -379,6 +417,32 @@ export default function Analysis() {
               </div>
             </div>
           </div>
+          
+          ${notes.summary || notes.exceptions || notes.handover ? `
+          <div class="section">
+            <h2>四、值班备注与交接</h2>
+            <div class="space-y-3">
+              ${notes.summary ? `
+              <div class="p-3 bg-blue-50 rounded-lg">
+                <p class="text-xs font-medium text-blue-700 mb-1">客流总结</p>
+                <p class="text-sm text-gray-700">${notes.summary}</p>
+              </div>
+              ` : ''}
+              ${notes.exceptions ? `
+              <div class="p-3 bg-orange-50 rounded-lg">
+                <p class="text-xs font-medium text-orange-700 mb-1">异常说明</p>
+                <p class="text-sm text-gray-700">${notes.exceptions}</p>
+              </div>
+              ` : ''}
+              ${notes.handover ? `
+              <div class="p-3 bg-green-50 rounded-lg">
+                <p class="text-xs font-medium text-green-700 mb-1">下一班提醒</p>
+                <p class="text-sm text-gray-700">${notes.handover}</p>
+              </div>
+              ` : ''}
+            </div>
+          </div>
+          ` : ''}
         </div>
       </body>
       </html>
@@ -391,157 +455,48 @@ export default function Analysis() {
     }, 250);
   };
 
-  const exportToPDF = () => {
-    if (!getDailyReport) return;
-    const doc = new jsPDF();
-    const pageWidth = doc.internal.pageSize.getWidth();
-    const pageHeight = doc.internal.pageSize.getHeight();
-    const margin = 20;
-    let yPos = margin;
-
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(20);
-    doc.setTextColor(15, 52, 96);
-    const title = '车站客流组织日报';
-    const titleWidth = doc.getTextWidth(title);
-    doc.text(title, (pageWidth - titleWidth) / 2, yPos);
-    yPos += 10;
-
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(12);
-    doc.setTextColor(100, 100, 100);
-    const dateStr = `日期：${format(selectedDate, 'yyyy年MM月dd日', { locale: zhCN })}`;
-    const dateWidth = doc.getTextWidth(dateStr);
-    doc.text(dateStr, (pageWidth - dateWidth) / 2, yPos);
-    yPos += 15;
-
-    doc.setDrawColor(15, 52, 96);
-    doc.setLineWidth(0.5);
-    doc.line(margin, yPos, pageWidth - margin, yPos);
-    yPos += 15;
-
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(14);
-    doc.setTextColor(15, 52, 96);
-    doc.text('一、客流概况', margin, yPos);
-    yPos += 10;
-
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(11);
-    doc.setTextColor(60, 60, 60);
-
-    const stats1 = [
-      { label: '进站人数', value: `${getDailyReport.totalIn.toLocaleString()} 人` },
-      { label: '出站人数', value: `${getDailyReport.totalOut.toLocaleString()} 人` },
-      { label: '峰值时段', value: `${getDailyReport.peakInHour}:00` },
-      { label: '峰值人数', value: `${getDailyReport.peakInCount.toLocaleString()} 人` },
-    ];
-
-    const colWidth = (pageWidth - 2 * margin) / 2;
-    stats1.forEach((stat, index) => {
-      const col = index % 2;
-      const row = Math.floor(index / 2);
-      const x = margin + col * colWidth;
-      const y = yPos + row * 12;
+  const exportToPDF = async () => {
+    if (!getDailyReport || !reportRef.current) return;
+    
+    try {
+      const canvas = await html2canvas(reportRef.current, {
+        scale: 2,
+        useCORS: true,
+        logging: false,
+        backgroundColor: '#ffffff',
+      });
       
-      doc.setTextColor(100, 100, 100);
-      doc.text(`${stat.label}：`, x, y);
-      doc.setTextColor(30, 30, 30);
-      doc.setFont('helvetica', 'bold');
-      doc.text(stat.value, x + doc.getTextWidth(`${stat.label}：`), y);
-      doc.setFont('helvetica', 'normal');
-    });
-    yPos += Math.ceil(stats1.length / 2) * 12 + 10;
-
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(14);
-    doc.setTextColor(15, 52, 96);
-    doc.text('二、事件处置', margin, yPos);
-    yPos += 10;
-
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(11);
-    doc.setTextColor(100, 100, 100);
-    doc.text('事件总数：', margin, yPos);
-    doc.setTextColor(30, 30, 30);
-    doc.setFont('helvetica', 'bold');
-    doc.text(`${getDailyReport.events} 件`, margin + doc.getTextWidth('事件总数：'), yPos);
-    doc.setFont('helvetica', 'normal');
-    yPos += 8;
-
-    doc.setTextColor(100, 100, 100);
-    doc.text('已解决：', margin, yPos);
-    doc.setTextColor(22, 199, 154);
-    doc.setFont('helvetica', 'bold');
-    doc.text(`${getDailyReport.resolvedEvents} 件`, margin + doc.getTextWidth('已解决：'), yPos);
-    doc.setFont('helvetica', 'normal');
-    yPos += 15;
-
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(14);
-    doc.setTextColor(15, 52, 96);
-    doc.text('三、设备运行', margin, yPos);
-    yPos += 10;
-
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(11);
-    doc.setTextColor(100, 100, 100);
-    doc.text('设备故障：', margin, yPos);
-    doc.setTextColor(30, 30, 30);
-    doc.setFont('helvetica', 'bold');
-    doc.text(`${getDailyReport.equipmentFaults} 次`, margin + doc.getTextWidth('设备故障：'), yPos);
-    doc.setFont('helvetica', 'normal');
-    yPos += 8;
-
-    doc.setTextColor(100, 100, 100);
-    doc.text('平均修复时间：', margin, yPos);
-    doc.setTextColor(30, 30, 30);
-    doc.setFont('helvetica', 'bold');
-    doc.text(`${getDailyReport.avgRepairTime} 分钟`, margin + doc.getTextWidth('平均修复时间：'), yPos);
-    doc.setFont('helvetica', 'normal');
-    yPos += 15;
-
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(14);
-    doc.setTextColor(15, 52, 96);
-    doc.text('四、小时客流数据', margin, yPos);
-    yPos += 10;
-
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(10);
-    doc.setTextColor(80, 80, 80);
-    const tableHeaders = ['小时', '进站人数', '出站人数'];
-    const colWidths = [40, 50, 50];
-    let tableX = margin;
-    tableHeaders.forEach((header, i) => {
-      doc.text(header, tableX, yPos);
-      tableX += colWidths[i];
-    });
-    yPos += 6;
-
-    doc.setDrawColor(200, 200, 200);
-    doc.setLineWidth(0.3);
-    doc.line(margin, yPos - 3, margin + 140, yPos - 3);
-    yPos += 4;
-
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(10);
-    doc.setTextColor(60, 60, 60);
-    hourlyFlow.slice(0, 12).forEach((row) => {
-      if (yPos > pageHeight - margin) {
+      const imgData = canvas.toDataURL('image/png');
+      const imgWidth = 210;
+      const imgHeight = (canvas.height * imgWidth) / canvas.width;
+      
+      const doc = new jsPDF({
+        orientation: imgHeight > imgWidth ? 'portrait' : 'landscape',
+        unit: 'mm',
+        format: 'a4',
+      });
+      
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+      
+      let heightLeft = imgHeight;
+      let position = 0;
+      
+      doc.addImage(imgData, 'PNG', 0, position, pageWidth, (imgWidth * imgHeight) / canvas.width);
+      heightLeft -= pageHeight;
+      
+      while (heightLeft >= 0) {
+        position = heightLeft - imgHeight;
         doc.addPage();
-        yPos = margin;
+        doc.addImage(imgData, 'PNG', 0, position, pageWidth, (imgWidth * imgHeight) / canvas.width);
+        heightLeft -= pageHeight;
       }
-      tableX = margin;
-      doc.text(`${row.hour}:00`, tableX, yPos);
-      tableX += colWidths[0];
-      doc.text(row.inCount.toString(), tableX, yPos);
-      tableX += colWidths[1];
-      doc.text(row.outCount.toString(), tableX, yPos);
-      yPos += 6;
-    });
-
-    doc.save(`车站客流日报_${format(selectedDate, 'yyyyMMdd')}.pdf`);
+      
+      doc.save(`车站客流日报_${format(selectedDate, 'yyyyMMdd')}.pdf`);
+    } catch (error) {
+      console.error('PDF导出失败:', error);
+      alert('PDF导出失败，请重试');
+    }
   };
 
   return (
@@ -775,7 +730,8 @@ export default function Analysis() {
 
       {activeTab === 'report' && (
         <div className="grid grid-cols-3 gap-6">
-          <Card title="日报预览" className="col-span-2">
+          <div className="col-span-2 space-y-6">
+            <Card title="日报预览">
             <div ref={reportRef} className="bg-white border border-gray-200 rounded-lg p-6">
               {!getDailyReport ? (
                 <div className="text-center py-12 text-gray-400">
@@ -839,11 +795,107 @@ export default function Analysis() {
                         </div>
                       </div>
                     </div>
+
+                    {(notes.summary || notes.exceptions || notes.handover) && (
+                      <div className="pt-4 border-t border-gray-200">
+                        <h3 className="font-semibold text-gray-800 mb-3">四、值班备注与交接</h3>
+                        <div className="space-y-3">
+                          {notes.summary && (
+                            <div className="p-3 bg-blue-50 rounded-lg">
+                              <p className="text-xs font-medium text-blue-700 mb-1 flex items-center gap-1">
+                                <MessageSquare className="w-3 h-3" />
+                                客流总结
+                              </p>
+                              <p className="text-sm text-gray-700">{notes.summary}</p>
+                            </div>
+                          )}
+                          {notes.exceptions && (
+                            <div className="p-3 bg-orange-50 rounded-lg">
+                              <p className="text-xs font-medium text-orange-700 mb-1 flex items-center gap-1">
+                                <AlertCircle className="w-3 h-3" />
+                                异常说明
+                              </p>
+                              <p className="text-sm text-gray-700">{notes.exceptions}</p>
+                            </div>
+                          )}
+                          {notes.handover && (
+                            <div className="p-3 bg-green-50 rounded-lg">
+                              <p className="text-xs font-medium text-green-700 mb-1 flex items-center gap-1">
+                                <Handshake className="w-3 h-3" />
+                                下一班提醒
+                              </p>
+                              <p className="text-sm text-gray-700">{notes.handover}</p>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </>
               )}
             </div>
           </Card>
+
+          <Card
+            title="值班备注与交接"
+            headerExtra={
+              <button
+                onClick={handleSaveNotes}
+                className={cn(
+                  'flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-sm transition-colors',
+                  notesSaved
+                    ? 'bg-green-500 text-white'
+                    : 'bg-primary-500 text-white hover:bg-primary-600'
+                )}
+              >
+                {notesSaved ? <FileCheck className="w-4 h-4" /> : <Save className="w-4 h-4" />}
+                {notesSaved ? '已保存' : '保存备注'}
+              </button>
+            }
+          >
+            <div className="space-y-3">
+              <div>
+                <label className="flex items-center gap-1.5 text-sm font-medium text-gray-700 mb-1.5">
+                  <MessageSquare className="w-4 h-4 text-blue-500" />
+                  当日客流总结
+                </label>
+                <textarea
+                  value={notes.summary}
+                  onChange={(e) => setNotes({ ...notes, summary: e.target.value })}
+                  placeholder="记录当日客流整体情况、重点时段特点等..."
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 resize-none text-sm"
+                  rows={2}
+                />
+              </div>
+              <div>
+                <label className="flex items-center gap-1.5 text-sm font-medium text-gray-700 mb-1.5">
+                  <AlertCircle className="w-4 h-4 text-orange-500" />
+                  异常说明
+                </label>
+                <textarea
+                  value={notes.exceptions}
+                  onChange={(e) => setNotes({ ...notes, exceptions: e.target.value })}
+                  placeholder="记录当日异常事件、设备故障、旅客投诉等需要说明的情况..."
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 resize-none text-sm"
+                  rows={2}
+                />
+              </div>
+              <div>
+                <label className="flex items-center gap-1.5 text-sm font-medium text-gray-700 mb-1.5">
+                  <Handshake className="w-4 h-4 text-green-500" />
+                  下一班提醒
+                </label>
+                <textarea
+                  value={notes.handover}
+                  onChange={(e) => setNotes({ ...notes, handover: e.target.value })}
+                  placeholder="记录需要下一班次关注的事项、未完成的工作等..."
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 resize-none text-sm"
+                  rows={2}
+                />
+              </div>
+            </div>
+          </Card>
+          </div>
 
           <div className="space-y-6">
             <Card title="报表导出">
@@ -880,16 +932,20 @@ export default function Analysis() {
                 >
                   <span className="text-sm text-primary-700 font-medium">
                     {format(selectedDate, 'yyyy年MM月dd日', { locale: zhCN })}日报
-                    <span className="text-xs text-primary-500 ml-1">(今日)</span>
+                    <span className="text-xs text-primary-500 ml-1">(当前)</span>
                   </span>
-                  <Download className="w-4 h-4 text-primary-500" />
+                  <FileCheck className="w-4 h-4 text-primary-500" />
                 </div>
                 {historicalReports.map(([key, data]) => (
-                  <div key={key} className="flex items-center justify-between p-2 hover:bg-gray-50 rounded-lg cursor-pointer">
-                    <span className="text-sm text-gray-700">
+                  <div
+                    key={key}
+                    onClick={() => handleHistoricalReportClick(key)}
+                    className="flex items-center justify-between p-2 hover:bg-gray-50 rounded-lg cursor-pointer transition-colors group"
+                  >
+                    <span className="text-sm text-gray-700 group-hover:text-primary-600">
                       {format(new Date(key), 'yyyy年MM月dd日', { locale: zhCN })}日报
                     </span>
-                    <Download className="w-4 h-4 text-gray-400 hover:text-primary-500" />
+                    <Download className="w-4 h-4 text-gray-400 group-hover:text-primary-500" />
                   </div>
                 ))}
               </div>

@@ -92,10 +92,10 @@ export const mockBroadcastTemplates: BroadcastTemplate[] = [
 ];
 
 export const mockBroadcastRecords: BroadcastRecord[] = [
-  { id: 'br1', templateId: 'bt1', content: '各位旅客请注意，开往北京南的G101次列车现在开始检票...', area: ['A候车区', 'A1检票口'], operator: '张三', playTime: new Date(now.getTime() - 10 * 60000), status: 'completed' },
-  { id: 'br2', templateId: 'bt5', content: '各位旅客，为了您和他人的安全...', area: ['全站'], operator: '李四', playTime: new Date(now.getTime() - 25 * 60000), status: 'completed' },
-  { id: 'br3', content: '请前往2号站台的旅客注意，2号站台临时调整，请改乘天桥通行', area: ['进站口', '换乘通道'], operator: '王五', playTime: new Date(now.getTime() - 5 * 60000), status: 'completed' },
-  { id: 'br4', templateId: 'bt4', content: '请王建国旅客听到广播后到服务台...', area: ['B候车区'], operator: '张三', playTime: new Date(now.getTime() - 2 * 60000), status: 'playing' },
+  { id: 'br1', templateId: 'bt1', content: '各位旅客请注意，开往北京南的G101次列车现在开始检票...', area: ['A候车区', 'A1检票口'], operator: '张三', playTime: new Date(now.getTime() - 10 * 60000), status: 'completed', source: 'template' },
+  { id: 'br2', templateId: 'bt5', content: '各位旅客，为了您和他人的安全...', area: ['全站'], operator: '李四', playTime: new Date(now.getTime() - 25 * 60000), status: 'completed', source: 'template' },
+  { id: 'br3', content: '请前往2号站台的旅客注意，2号站台临时调整，请改乘天桥通行', area: ['进站口', '换乘通道'], operator: '王五', playTime: new Date(now.getTime() - 5 * 60000), status: 'completed', source: 'custom' },
+  { id: 'br4', templateId: 'bt4', content: '请王建国旅客听到广播后到服务台...', area: ['B候车区'], operator: '张三', playTime: new Date(now.getTime() - 2 * 60000), status: 'playing', source: 'template' },
 ];
 
 export const mockStaff: Staff[] = [
