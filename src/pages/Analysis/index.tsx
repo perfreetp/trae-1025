@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
 import ReactECharts from 'echarts-for-react';
 import {
   BarChart3,
@@ -14,10 +14,11 @@ import {
 import { Card } from '@/components/ui/Card';
 import { Tag } from '@/components/ui/Tag';
 import { useAppStore } from '@/store/useAppStore';
-import { mockDailyReport, mockHourlyFlow } from '@/mock';
 import { cn } from '@/lib/utils';
 import { format, differenceInDays } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
+import * as XLSX from 'xlsx';
+import jsPDF from 'jspdf';
 
 export default function Analysis() {
   const {
@@ -28,6 +29,8 @@ export default function Analysis() {
     selectedDate,
     setSelectedDate,
     refreshAnalysisData,
+    getOrCreateDailyReport,
+    dailyReports,
   } = useAppStore();
   const [activeTab, setActiveTab] = useState<'forecast' | 'comparison' | 'report' | 'equipment'>('forecast');
   const [timeRange, setTimeRange] = useState<'day' | 'week' | 'month'>('day');
@@ -37,33 +40,34 @@ export default function Analysis() {
   const resolvedEvents = events.filter((e) => e.status === 'resolved' || e.status === 'closed').length;
   const faultDevices = gateDevices.filter((g) => g.status === 'fault').length;
 
+  const dateKey = useMemo(() => format(selectedDate, 'yyyy-MM-dd'), [selectedDate]);
+  const [reportData, setReportData] = useState(() => dailyReports[dateKey] || null);
+
+  useEffect(() => {
+    if (!dailyReports[dateKey]) {
+      const data = getOrCreateDailyReport(dateKey);
+      setReportData(data);
+    } else {
+      setReportData(dailyReports[dateKey]);
+    }
+  }, [dateKey, dailyReports, getOrCreateDailyReport]);
+
+  const currentReportData = reportData || dailyReports[dateKey];
+
+  const getDailyReport = currentReportData?.report;
+  const hourlyFlow = currentReportData?.hourlyFlow || [];
+
   const dateOffset = useMemo(() => {
     const today = new Date();
     return differenceInDays(today, selectedDate);
   }, [selectedDate]);
 
-  const getDailyReport = useMemo(() => {
-    const variation = 1 - dateOffset * 0.02;
-    return {
-      totalIn: Math.floor(mockDailyReport.totalIn * variation * (0.95 + Math.random() * 0.1)),
-      totalOut: Math.floor(mockDailyReport.totalOut * variation * (0.95 + Math.random() * 0.1)),
-      peakInHour: mockDailyReport.peakInHour,
-      peakInCount: Math.floor(mockDailyReport.peakInCount * variation * (0.95 + Math.random() * 0.1)),
-      events: Math.floor(mockDailyReport.events * variation),
-      resolvedEvents: Math.floor(mockDailyReport.resolvedEvents * variation),
-      equipmentFaults: Math.floor(mockDailyReport.equipmentFaults * variation),
-      avgRepairTime: mockDailyReport.avgRepairTime,
-    };
-  }, [dateOffset]);
-
-  const hourlyFlow = useMemo(() => {
-    const variation = 1 - dateOffset * 0.02;
-    return mockHourlyFlow.map((d) => ({
-      hour: d.hour,
-      inCount: Math.floor(d.inCount * variation * (0.9 + Math.random() * 0.2)),
-      outCount: Math.floor(d.outCount * variation * (0.9 + Math.random() * 0.2)),
-    }));
-  }, [dateOffset]);
+  const historicalReports = useMemo(() => {
+    return Object.entries(dailyReports)
+      .filter(([key]) => key !== dateKey)
+      .sort(([a], [b]) => b.localeCompare(a))
+      .slice(0, 5);
+  }, [dailyReports, dateKey]);
 
   const trendOption = useMemo(() => ({
     tooltip: {
@@ -247,40 +251,51 @@ export default function Analysis() {
     }, 1000);
   };
 
-  const exportToCSV = () => {
-    const headers = ['指标', '数值', '单位'];
-    const rows = [
+  const exportToExcel = () => {
+    if (!getDailyReport) return;
+    const wb = XLSX.utils.book_new();
+    
+    const summaryData = [
+      ['车站客流组织日报'],
+      [`日期：${format(selectedDate, 'yyyy年MM月dd日', { locale: zhCN })}`],
+      [],
+      ['一、客流概况'],
+      ['指标', '数值', '单位'],
       ['进站人数', getDailyReport.totalIn.toLocaleString(), '人'],
       ['出站人数', getDailyReport.totalOut.toLocaleString(), '人'],
       ['峰值时段', `${getDailyReport.peakInHour}:00`, ''],
       ['峰值人数', getDailyReport.peakInCount.toLocaleString(), '人'],
+      [],
+      ['二、事件处置'],
+      ['指标', '数值', '单位'],
       ['事件总数', getDailyReport.events.toString(), '件'],
       ['已解决', getDailyReport.resolvedEvents.toString(), '件'],
+      [],
+      ['三、设备运行'],
+      ['指标', '数值', '单位'],
       ['设备故障', getDailyReport.equipmentFaults.toString(), '次'],
       ['平均修复时间', getDailyReport.avgRepairTime.toString(), '分钟'],
     ];
+    
+    const ws = XLSX.utils.aoa_to_sheet(summaryData);
+    ws['!cols'] = [{ wch: 20 }, { wch: 15 }, { wch: 10 }];
+    XLSX.utils.book_append_sheet(wb, ws, '日报汇总');
 
-    let csvContent = '\uFEFF';
-    csvContent += headers.join(',') + '\n';
-    rows.forEach((row) => {
-      csvContent += row.join(',') + '\n';
-    });
+    const hourlyData = [
+      ['小时客流数据'],
+      [],
+      ['小时', '进站人数', '出站人数'],
+      ...hourlyFlow.map((d) => [`${d.hour}:00`, d.inCount, d.outCount]),
+    ];
+    const ws2 = XLSX.utils.aoa_to_sheet(hourlyData);
+    ws2['!cols'] = [{ wch: 10 }, { wch: 15 }, { wch: 15 }];
+    XLSX.utils.book_append_sheet(wb, ws2, '小时客流');
 
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `车站客流日报_${format(selectedDate, 'yyyyMMdd')}.csv`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    XLSX.writeFile(wb, `车站客流日报_${format(selectedDate, 'yyyyMMdd')}.xlsx`);
   };
 
   const handlePrint = () => {
-    const printContent = reportRef.current;
-    if (!printContent) return;
-
+    if (!getDailyReport) return;
     const printWindow = window.open('', '_blank');
     if (!printWindow) return;
 
@@ -312,7 +327,7 @@ export default function Analysis() {
         <div class="report-container">
           <div class="header">
             <h1>车站客流组织日报</h1>
-            <p>${format(selectedDate, 'yyyy年MM月dd日')}</p>
+            <p>${format(selectedDate, 'yyyy年MM月dd日', { locale: zhCN })}</p>
           </div>
           
           <div class="section">
@@ -377,7 +392,156 @@ export default function Analysis() {
   };
 
   const exportToPDF = () => {
-    handlePrint();
+    if (!getDailyReport) return;
+    const doc = new jsPDF();
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const margin = 20;
+    let yPos = margin;
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(20);
+    doc.setTextColor(15, 52, 96);
+    const title = '车站客流组织日报';
+    const titleWidth = doc.getTextWidth(title);
+    doc.text(title, (pageWidth - titleWidth) / 2, yPos);
+    yPos += 10;
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(12);
+    doc.setTextColor(100, 100, 100);
+    const dateStr = `日期：${format(selectedDate, 'yyyy年MM月dd日', { locale: zhCN })}`;
+    const dateWidth = doc.getTextWidth(dateStr);
+    doc.text(dateStr, (pageWidth - dateWidth) / 2, yPos);
+    yPos += 15;
+
+    doc.setDrawColor(15, 52, 96);
+    doc.setLineWidth(0.5);
+    doc.line(margin, yPos, pageWidth - margin, yPos);
+    yPos += 15;
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(14);
+    doc.setTextColor(15, 52, 96);
+    doc.text('一、客流概况', margin, yPos);
+    yPos += 10;
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(11);
+    doc.setTextColor(60, 60, 60);
+
+    const stats1 = [
+      { label: '进站人数', value: `${getDailyReport.totalIn.toLocaleString()} 人` },
+      { label: '出站人数', value: `${getDailyReport.totalOut.toLocaleString()} 人` },
+      { label: '峰值时段', value: `${getDailyReport.peakInHour}:00` },
+      { label: '峰值人数', value: `${getDailyReport.peakInCount.toLocaleString()} 人` },
+    ];
+
+    const colWidth = (pageWidth - 2 * margin) / 2;
+    stats1.forEach((stat, index) => {
+      const col = index % 2;
+      const row = Math.floor(index / 2);
+      const x = margin + col * colWidth;
+      const y = yPos + row * 12;
+      
+      doc.setTextColor(100, 100, 100);
+      doc.text(`${stat.label}：`, x, y);
+      doc.setTextColor(30, 30, 30);
+      doc.setFont('helvetica', 'bold');
+      doc.text(stat.value, x + doc.getTextWidth(`${stat.label}：`), y);
+      doc.setFont('helvetica', 'normal');
+    });
+    yPos += Math.ceil(stats1.length / 2) * 12 + 10;
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(14);
+    doc.setTextColor(15, 52, 96);
+    doc.text('二、事件处置', margin, yPos);
+    yPos += 10;
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(11);
+    doc.setTextColor(100, 100, 100);
+    doc.text('事件总数：', margin, yPos);
+    doc.setTextColor(30, 30, 30);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`${getDailyReport.events} 件`, margin + doc.getTextWidth('事件总数：'), yPos);
+    doc.setFont('helvetica', 'normal');
+    yPos += 8;
+
+    doc.setTextColor(100, 100, 100);
+    doc.text('已解决：', margin, yPos);
+    doc.setTextColor(22, 199, 154);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`${getDailyReport.resolvedEvents} 件`, margin + doc.getTextWidth('已解决：'), yPos);
+    doc.setFont('helvetica', 'normal');
+    yPos += 15;
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(14);
+    doc.setTextColor(15, 52, 96);
+    doc.text('三、设备运行', margin, yPos);
+    yPos += 10;
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(11);
+    doc.setTextColor(100, 100, 100);
+    doc.text('设备故障：', margin, yPos);
+    doc.setTextColor(30, 30, 30);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`${getDailyReport.equipmentFaults} 次`, margin + doc.getTextWidth('设备故障：'), yPos);
+    doc.setFont('helvetica', 'normal');
+    yPos += 8;
+
+    doc.setTextColor(100, 100, 100);
+    doc.text('平均修复时间：', margin, yPos);
+    doc.setTextColor(30, 30, 30);
+    doc.setFont('helvetica', 'bold');
+    doc.text(`${getDailyReport.avgRepairTime} 分钟`, margin + doc.getTextWidth('平均修复时间：'), yPos);
+    doc.setFont('helvetica', 'normal');
+    yPos += 15;
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(14);
+    doc.setTextColor(15, 52, 96);
+    doc.text('四、小时客流数据', margin, yPos);
+    yPos += 10;
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10);
+    doc.setTextColor(80, 80, 80);
+    const tableHeaders = ['小时', '进站人数', '出站人数'];
+    const colWidths = [40, 50, 50];
+    let tableX = margin;
+    tableHeaders.forEach((header, i) => {
+      doc.text(header, tableX, yPos);
+      tableX += colWidths[i];
+    });
+    yPos += 6;
+
+    doc.setDrawColor(200, 200, 200);
+    doc.setLineWidth(0.3);
+    doc.line(margin, yPos - 3, margin + 140, yPos - 3);
+    yPos += 4;
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(10);
+    doc.setTextColor(60, 60, 60);
+    hourlyFlow.slice(0, 12).forEach((row) => {
+      if (yPos > pageHeight - margin) {
+        doc.addPage();
+        yPos = margin;
+      }
+      tableX = margin;
+      doc.text(`${row.hour}:00`, tableX, yPos);
+      tableX += colWidths[0];
+      doc.text(row.inCount.toString(), tableX, yPos);
+      tableX += colWidths[1];
+      doc.text(row.outCount.toString(), tableX, yPos);
+      yPos += 6;
+    });
+
+    doc.save(`车站客流日报_${format(selectedDate, 'yyyyMMdd')}.pdf`);
   };
 
   return (
@@ -575,7 +739,7 @@ export default function Analysis() {
 
           <Card title="关键指标对比" className="col-span-2">
             <div className="grid grid-cols-4 gap-4">
-              {[
+              {!getDailyReport ? [] : [
                 { label: '今日进站', value: getDailyReport.totalIn.toLocaleString(), trend: 8.5, unit: '人' },
                 { label: '今日出站', value: getDailyReport.totalOut.toLocaleString(), trend: 6.2, unit: '人' },
                 { label: '峰值小时', value: `${getDailyReport.peakInHour}:00`, trend: 0, unit: '' },
@@ -613,62 +777,71 @@ export default function Analysis() {
         <div className="grid grid-cols-3 gap-6">
           <Card title="日报预览" className="col-span-2">
             <div ref={reportRef} className="bg-white border border-gray-200 rounded-lg p-6">
-              <div className="text-center mb-6">
-                <h2 className="text-xl font-bold text-gray-900">车站客流组织日报</h2>
-                <p className="text-sm text-gray-500 mt-1">{format(selectedDate, 'yyyy年MM月dd日', { locale: zhCN })}</p>
-              </div>
+              {!getDailyReport ? (
+                <div className="text-center py-12 text-gray-400">
+                  <RefreshCw className="w-8 h-8 mx-auto mb-3 animate-spin opacity-50" />
+                  <p>加载中...</p>
+                </div>
+              ) : (
+                <>
+                  <div className="text-center mb-6">
+                    <h2 className="text-xl font-bold text-gray-900">车站客流组织日报</h2>
+                    <p className="text-sm text-gray-500 mt-1">{format(selectedDate, 'yyyy年MM月dd日', { locale: zhCN })}</p>
+                  </div>
 
-              <div className="space-y-4">
-                <div>
-                  <h3 className="font-semibold text-gray-800 mb-2">一、客流概况</h3>
-                  <div className="grid grid-cols-4 gap-4">
-                    <div className="text-center p-3 bg-gray-50 rounded">
-                      <p className="text-sm text-gray-500">进站人数</p>
-                      <p className="text-lg font-bold text-gray-900">{getDailyReport.totalIn.toLocaleString()}</p>
+                  <div className="space-y-4">
+                    <div>
+                      <h3 className="font-semibold text-gray-800 mb-2">一、客流概况</h3>
+                      <div className="grid grid-cols-4 gap-4">
+                        <div className="text-center p-3 bg-gray-50 rounded">
+                          <p className="text-sm text-gray-500">进站人数</p>
+                          <p className="text-lg font-bold text-gray-900">{getDailyReport.totalIn.toLocaleString()}</p>
+                        </div>
+                        <div className="text-center p-3 bg-gray-50 rounded">
+                          <p className="text-sm text-gray-500">出站人数</p>
+                          <p className="text-lg font-bold text-gray-900">{getDailyReport.totalOut.toLocaleString()}</p>
+                        </div>
+                        <div className="text-center p-3 bg-gray-50 rounded">
+                          <p className="text-sm text-gray-500">峰值时段</p>
+                          <p className="text-lg font-bold text-gray-900">{getDailyReport.peakInHour}:00</p>
+                        </div>
+                        <div className="text-center p-3 bg-gray-50 rounded">
+                          <p className="text-sm text-gray-500">峰值人数</p>
+                          <p className="text-lg font-bold text-gray-900">{getDailyReport.peakInCount}</p>
+                        </div>
+                      </div>
                     </div>
-                    <div className="text-center p-3 bg-gray-50 rounded">
-                      <p className="text-sm text-gray-500">出站人数</p>
-                      <p className="text-lg font-bold text-gray-900">{getDailyReport.totalOut.toLocaleString()}</p>
+
+                    <div>
+                      <h3 className="font-semibold text-gray-800 mb-2">二、事件处置</h3>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="text-center p-3 bg-gray-50 rounded">
+                          <p className="text-sm text-gray-500">事件总数</p>
+                          <p className="text-lg font-bold text-gray-900">{getDailyReport.events}件</p>
+                        </div>
+                        <div className="text-center p-3 bg-gray-50 rounded">
+                          <p className="text-sm text-gray-500">已解决</p>
+                          <p className="text-lg font-bold text-green-600">{getDailyReport.resolvedEvents}件</p>
+                        </div>
+                      </div>
                     </div>
-                    <div className="text-center p-3 bg-gray-50 rounded">
-                      <p className="text-sm text-gray-500">峰值时段</p>
-                      <p className="text-lg font-bold text-gray-900">{getDailyReport.peakInHour}:00</p>
-                    </div>
-                    <div className="text-center p-3 bg-gray-50 rounded">
-                      <p className="text-sm text-gray-500">峰值人数</p>
-                      <p className="text-lg font-bold text-gray-900">{getDailyReport.peakInCount}</p>
+
+                    <div>
+                      <h3 className="font-semibold text-gray-800 mb-2">三、设备运行</h3>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="text-center p-3 bg-gray-50 rounded">
+                          <p className="text-sm text-gray-500">设备故障</p>
+                          <p className="text-lg font-bold text-gray-900">{getDailyReport.equipmentFaults}次</p>
+                        </div>
+                        <div className="text-center p-3 bg-gray-50 rounded">
+                          <p className="text-sm text-gray-500">平均修复时间</p>
+                          <p className="text-lg font-bold text-gray-900">{getDailyReport.avgRepairTime}分钟</p>
+                        </div>
+                      </div>
                     </div>
                   </div>
-                </div>
-
-                <div>
-                  <h3 className="font-semibold text-gray-800 mb-2">二、事件处置</h3>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="text-center p-3 bg-gray-50 rounded">
-                      <p className="text-sm text-gray-500">事件总数</p>
-                      <p className="text-lg font-bold text-gray-900">{getDailyReport.events}件</p>
-                    </div>
-                    <div className="text-center p-3 bg-gray-50 rounded">
-                      <p className="text-sm text-gray-500">已解决</p>
-                      <p className="text-lg font-bold text-green-600">{getDailyReport.resolvedEvents}件</p>
-                    </div>
-                  </div>
-                </div>
-
-                <div>
-                  <h3 className="font-semibold text-gray-800 mb-2">三、设备运行</h3>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="text-center p-3 bg-gray-50 rounded">
-                      <p className="text-sm text-gray-500">设备故障</p>
-                      <p className="text-lg font-bold text-gray-900">{getDailyReport.equipmentFaults}次</p>
-                    </div>
-                    <div className="text-center p-3 bg-gray-50 rounded">
-                      <p className="text-sm text-gray-500">平均修复时间</p>
-                      <p className="text-lg font-bold text-gray-900">{getDailyReport.avgRepairTime}分钟</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
+                </>
+              )}
             </div>
           </Card>
 
@@ -683,7 +856,7 @@ export default function Analysis() {
                   导出 PDF 格式
                 </button>
                 <button
-                  onClick={exportToCSV}
+                  onClick={exportToExcel}
                   className="w-full py-3 px-4 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors flex items-center justify-center gap-2"
                 >
                   <Download className="w-4 h-4" />
@@ -701,9 +874,21 @@ export default function Analysis() {
 
             <Card title="历史报表">
               <div className="space-y-2">
-                {['2024年01月15日', '2024年01月14日', '2024年01月13日', '2024年01月12日', '2024年01月11日'].map((date, index) => (
-                  <div key={index} className="flex items-center justify-between p-2 hover:bg-gray-50 rounded-lg cursor-pointer">
-                    <span className="text-sm text-gray-700">{date}日报</span>
+                <div
+                  key={dateKey}
+                  className="flex items-center justify-between p-2 bg-primary-50 rounded-lg"
+                >
+                  <span className="text-sm text-primary-700 font-medium">
+                    {format(selectedDate, 'yyyy年MM月dd日', { locale: zhCN })}日报
+                    <span className="text-xs text-primary-500 ml-1">(今日)</span>
+                  </span>
+                  <Download className="w-4 h-4 text-primary-500" />
+                </div>
+                {historicalReports.map(([key, data]) => (
+                  <div key={key} className="flex items-center justify-between p-2 hover:bg-gray-50 rounded-lg cursor-pointer">
+                    <span className="text-sm text-gray-700">
+                      {format(new Date(key), 'yyyy年MM月dd日', { locale: zhCN })}日报
+                    </span>
                     <Download className="w-4 h-4 text-gray-400 hover:text-primary-500" />
                   </div>
                 ))}

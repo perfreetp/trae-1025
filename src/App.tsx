@@ -1,4 +1,5 @@
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { useEffect } from 'react';
 import { Layout } from '@/components/layout/Layout';
 import Dashboard from '@/pages/Dashboard';
 import GateMonitor from '@/pages/GateMonitor';
@@ -7,8 +8,19 @@ import Broadcast from '@/pages/Broadcast';
 import StaffScheduling from '@/pages/StaffScheduling';
 import EventLog from '@/pages/EventLog';
 import Analysis from '@/pages/Analysis';
+import { useAppStore } from '@/store/useAppStore';
 
 export default function App() {
+  const checkAndPlayScheduledBroadcasts = useAppStore((state) => state.checkAndPlayScheduledBroadcasts);
+
+  useEffect(() => {
+    checkAndPlayScheduledBroadcasts();
+    const interval = setInterval(() => {
+      checkAndPlayScheduledBroadcasts();
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [checkAndPlayScheduledBroadcasts]);
+
   return (
     <Router>
       <Routes>

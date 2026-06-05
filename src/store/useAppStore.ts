@@ -13,6 +13,7 @@ import type {
   TrainForecast,
   PeakWarning,
   ScheduledBroadcast,
+  DailyReportData,
 } from '@/types';
 import {
   mockPassengerFlow,
@@ -26,7 +27,39 @@ import {
   mockEvents,
   mockTrainForecasts,
   mockPeakWarning,
+  mockDailyReport,
+  mockHourlyFlow,
 } from '@/mock';
+import { format } from 'date-fns';
+
+const generateDailyReportData = (dateKey: string): DailyReportData => {
+  const baseDate = new Date(dateKey);
+  const today = new Date();
+  const diffDays = Math.floor((today.getTime() - baseDate.getTime()) / (1000 * 60 * 60 * 24));
+  const variation = Math.max(0.5, 1 - diffDays * 0.02);
+  const randomFactor = () => 0.9 + Math.random() * 0.2;
+
+  return {
+    dateKey,
+    report: {
+      date: baseDate,
+      totalIn: Math.floor(mockDailyReport.totalIn * variation * randomFactor()),
+      totalOut: Math.floor(mockDailyReport.totalOut * variation * randomFactor()),
+      peakInHour: mockDailyReport.peakInHour,
+      peakInCount: Math.floor(mockDailyReport.peakInCount * variation * randomFactor()),
+      events: Math.max(1, Math.floor(mockDailyReport.events * variation * randomFactor())),
+      resolvedEvents: Math.max(0, Math.floor(mockDailyReport.resolvedEvents * variation * randomFactor())),
+      equipmentFaults: Math.max(0, Math.floor(mockDailyReport.equipmentFaults * variation * randomFactor())),
+      avgRepairTime: mockDailyReport.avgRepairTime,
+    },
+    hourlyFlow: mockHourlyFlow.map((d) => ({
+      hour: d.hour,
+      inCount: Math.floor(d.inCount * variation * randomFactor()),
+      outCount: Math.floor(d.outCount * variation * randomFactor()),
+    })),
+    generatedAt: new Date(),
+  };
+};
 
 interface AppState {
   currentUser: {
@@ -54,6 +87,8 @@ interface AppState {
     status: string;
     area: string;
   };
+  dailyReports: Record<string, DailyReportData>;
+
   toggleSidebar: () => void;
   setTheme: (theme: 'light' | 'dark') => void;
   toggleCheckPoint: (id: string) => void;
@@ -68,6 +103,9 @@ interface AppState {
   refreshAnalysisData: () => void;
   setBroadcastFilter: (filter: Partial<AppState['broadcastFilter']>) => void;
   clearBroadcastFilter: () => void;
+  getOrCreateDailyReport: (dateKey: string) => DailyReportData;
+  checkAndPlayScheduledBroadcasts: () => void;
+  refreshDailyReport: (dateKey: string) => void;
 }
 
 export const useAppStore = create<AppState>()(
@@ -98,6 +136,8 @@ export const useAppStore = create<AppState>()(
         status: 'all',
         area: 'all',
       },
+      dailyReports: {},
+
       toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
       setTheme: (theme) => set({ theme }),
       toggleCheckPoint: (id) => set((state) => ({
@@ -143,12 +183,18 @@ export const useAppStore = create<AppState>()(
           p.id === id ? { ...p, status } : p
         ),
       })),
-      addScheduledBroadcast: (broadcast) => set((state) => ({
-        scheduledBroadcasts: [
-          { ...broadcast, id: `sb${Date.now()}`, createdAt: new Date(), status: 'pending' },
-          ...state.scheduledBroadcasts,
-        ],
-      })),
+      addScheduledBroadcast: (broadcast) => {
+        const newBroadcast: ScheduledBroadcast = {
+          ...broadcast,
+          id: `sb${Date.now()}`,
+          createdAt: new Date(),
+          status: 'pending',
+        };
+        set((state) => ({
+          scheduledBroadcasts: [newBroadcast, ...state.scheduledBroadcasts],
+        }));
+        setTimeout(() => get().checkAndPlayScheduledBroadcasts(), 100);
+      },
       cancelScheduledBroadcast: (id) => set((state) => ({
         scheduledBroadcasts: state.scheduledBroadcasts.map((sb) =>
           sb.id === id ? { ...sb, status: 'cancelled' } : sb
@@ -157,13 +203,18 @@ export const useAppStore = create<AppState>()(
       setSelectedDate: (date) => set({ selectedDate: date }),
       refreshAnalysisData: () => {
         const state = get();
-        const baseVariation = Math.random() * 0.2 - 0.1;
+        const dateKey = format(state.selectedDate, 'yyyy-MM-dd');
+        const newReportData = generateDailyReportData(dateKey);
         set({
+          dailyReports: {
+            ...state.dailyReports,
+            [dateKey]: newReportData,
+          },
           passengerFlow: {
             ...state.passengerFlow,
-            inCount: Math.floor(state.passengerFlow.inCount * (1 + baseVariation)),
-            outCount: Math.floor(state.passengerFlow.outCount * (1 + baseVariation)),
-            inStation: Math.floor(state.passengerFlow.inStation * (1 + baseVariation)),
+            inCount: Math.floor(state.passengerFlow.inCount * (0.95 + Math.random() * 0.1)),
+            outCount: Math.floor(state.passengerFlow.outCount * (0.95 + Math.random() * 0.1)),
+            inStation: Math.floor(state.passengerFlow.inStation * (0.95 + Math.random() * 0.1)),
           },
         });
       },
@@ -173,6 +224,59 @@ export const useAppStore = create<AppState>()(
       clearBroadcastFilter: () => set({
         broadcastFilter: { search: '', status: 'all', area: 'all' },
       }),
+      getOrCreateDailyReport: (dateKey) => {
+        const state = get();
+        if (state.dailyReports[dateKey]) {
+          return state.dailyReports[dateKey];
+        }
+        const newData = generateDailyReportData(dateKey);
+        set({
+          dailyReports: {
+            ...state.dailyReports,
+            [dateKey]: newData,
+          },
+        });
+        return newData;
+      },
+      refreshDailyReport: (dateKey) => {
+        const newData = generateDailyReportData(dateKey);
+        set((state) => ({
+          dailyReports: {
+            ...state.dailyReports,
+            [dateKey]: newData,
+          },
+        }));
+      },
+      checkAndPlayScheduledBroadcasts: () => {
+        const state = get();
+        const now = new Date();
+        const updatedBroadcasts: ScheduledBroadcast[] = [];
+        const newRecords: BroadcastRecord[] = [];
+
+        state.scheduledBroadcasts.forEach((sb) => {
+          if (sb.status === 'pending' && new Date(sb.scheduledTime) <= now) {
+            updatedBroadcasts.push({ ...sb, status: 'played' });
+            newRecords.push({
+              id: `br${Date.now()}-${sb.id}`,
+              templateId: sb.templateId,
+              content: sb.content,
+              area: sb.area,
+              operator: sb.createdBy,
+              playTime: new Date(sb.scheduledTime),
+              status: 'completed',
+            });
+          } else {
+            updatedBroadcasts.push(sb);
+          }
+        });
+
+        if (newRecords.length > 0) {
+          set({
+            scheduledBroadcasts: updatedBroadcasts,
+            broadcastRecords: [...newRecords, ...state.broadcastRecords],
+          });
+        }
+      },
     }),
     {
       name: 'station-flow-storage',
@@ -184,6 +288,7 @@ export const useAppStore = create<AppState>()(
         events: state.events,
         broadcastFilter: state.broadcastFilter,
         selectedDate: state.selectedDate.toISOString(),
+        dailyReports: state.dailyReports,
       }),
       onRehydrateStorage: () => (state) => {
         if (state) {
@@ -208,6 +313,16 @@ export const useAppStore = create<AppState>()(
             reportTime: new Date(e.reportTime),
             updates: e.updates.map((u: any) => ({ ...u, timestamp: new Date(u.timestamp) })),
           }));
+          if (state.dailyReports) {
+            Object.keys(state.dailyReports).forEach((key) => {
+              const report = state.dailyReports![key];
+              report.report.date = new Date(report.report.date);
+              report.generatedAt = new Date(report.generatedAt);
+            });
+          }
+          setTimeout(() => {
+            state.checkAndPlayScheduledBroadcasts();
+          }, 500);
         }
       },
     }

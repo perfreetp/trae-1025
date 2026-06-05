@@ -179,3 +179,14 @@ export interface ScheduledBroadcast {
   createdBy: string;
   createdAt: Date;
 }
+
+export interface DailyReportData {
+  dateKey: string;
+  report: DailyReport;
+  hourlyFlow: Array<{
+    hour: number;
+    inCount: number;
+    outCount: number;
+  }>;
+  generatedAt: Date;
+}
